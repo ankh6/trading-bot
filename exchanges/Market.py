@@ -49,21 +49,6 @@ class Exchange(metaclass=ABCMeta):
         self.base_asset = symbols[0]["baseAsset"]
         self.quote_asset = symbols[0]["quoteAsset"]
     
-    
-    def create_symbol_dataframe(self, symbol_trading_attributes: np.array):
-        ''' Generates a DataFrame that stores attributes of a the trading pair
-
-        Arguments:
-        symbol_trading_attributes: a list of attributes that are available on the exchange for the given pair
-        '''
-        df = pd.DataFrame(data=symbol_trading_attributes, columns=["Open time", "Open", "High", "Low", "Close", "Volume", "Close time", "Quote asset volumes", "Number of trades", "Taker buy base volume", "Take buy quote volume", "Ignore"])
-        # Binance stores a value at the last index of each set of observations
-        # Per documentation, this value is set as "Ignored"
-        # We drop the column that stores these values
-        df.drop(labels=["Ignore"], axis = 1, inplace=True)
-        self.convert_object_series_to_datetime(df, ["Open time", "Close time"])
-        return df
-
     def fetch_price_data_given_symbol(self, time: str, interval_type:str):
         ''' Fetches the symbol trading attributes from Binance API
 
@@ -111,6 +96,23 @@ class Exchange(metaclass=ABCMeta):
             except Exception as e:
                 print(e.args)
                 raise Exception
+    
+    
+    def create_symbol_dataframe(self, symbol_trading_attributes: np.array):
+        ''' Generates a DataFrame that stores attributes of a the trading pair
+
+        Arguments:
+        symbol_trading_attributes: a list of attributes that are available on the exchange for the given pair
+        '''
+        df = pd.DataFrame(data=symbol_trading_attributes, columns=["Open time", "Open", "High", "Low", "Close", "Volume", "Close time", "Quote asset volumes", "Number of trades", "Taker buy base volume", "Take buy quote volume", "Ignore"])
+        # Binance stores a value at the last index of each set of observations
+        # Per documentation, this value is set as "Ignored"
+        # We drop the column that stores these values
+        df.drop(labels=["Ignore"], axis = 1, inplace=True)
+        self.convert_object_series_to_datetime(df, ["Open time", "Close time"])
+        return df
+
+    
     
     # PAY attention to sell only what you have
     # Need user account
