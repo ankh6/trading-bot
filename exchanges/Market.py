@@ -132,11 +132,10 @@ class Exchange(metaclass=ABCMeta):
         '''
         Main routine
         '''
-        ex = Exchange()
-        ex.initialize("ETHUSDC")
+        self.initialize("ETHUSDC")
         print("Fetching data from Binance API . . .")
-        trading_attributes = ex.fetch_price_data_given_symbol()
-        df_trading_attributes = ex.create_symbol_dataframe(symbol_trading_attributes=trading_attributes)
+        trading_attributes = self.fetch_price_data_given_symbol()
+        df_trading_attributes = self.create_symbol_dataframe(symbol_trading_attributes=trading_attributes)
         print(f"Trading attributes DataFrame: {df_trading_attributes}")
         short_ema, long_ema = MomentumStrategy.compute_short_long_ema(trading_attributes_dataframe=df_trading_attributes)
         print(f"Values of short and long ema, respectively: {short_ema} {long_ema}")
