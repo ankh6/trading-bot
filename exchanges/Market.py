@@ -1,7 +1,9 @@
 from abc import ABCMeta
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 from Constants import BASE_URL, API_VERSION
-from requests import get
+from orders.Order import OrderType, Side
+from errors.Exceptions import LabelDoesNotExistError
+from requests import get, post
 import numpy as np
 import pandas as pd
 
@@ -58,7 +60,9 @@ class Exchange(metaclass=ABCMeta):
         # Binance stores a value at the last index of each set of observations
         # Per documentation, this value is set as "Ignored"
         # We drop the column that stores these values
-        df.drop(labels=["Ignore"], axis = 1, inplace=True) 
+        df.drop(labels=["Ignore"], axis = 1, inplace=True)
+        self.convert_object_series_to_datetime(df, ["Open time", "Close time"])
+        return df
 
     def fetch_price_data_given_symbol(self, time: str, interval_type:str):
         ''' Fetches the symbol trading attributes from Binance API
@@ -66,6 +70,7 @@ class Exchange(metaclass=ABCMeta):
         Arguments:
         time: an integer from 1 to 9
         interval_type: case-sensitive, s(SECOND), m(MINUTE), h(HOUR), d(DAY)
+        For example, given time="1", interval_type="h", the trading attributes are reported for each minute on the exchange
         See their documentation for the enums they support: https://binance-docs.github.io/apidocs/spot/en/#limits
 
         Returns:
@@ -73,5 +78,48 @@ class Exchange(metaclass=ABCMeta):
         '''
         _interval = time + interval_type
         exchange_info = self.fetch_exchange_given_trading_pairs(url=BASE_URL, version=API_VERSION, endpoint="klines",params=[("symbol", self.symbol),("interval", _interval)])
-        return np.array(exchange_info,copy=False)
+        return np.array(exchange_info, copy=False)
         
+    
+    def convert_object_to_string(self, input) -> object:
+        ''' Converts an input of type object to an input of type string
+
+        Arguments:
+        input, the input to be converted
+
+        Return:
+        input: the converted input
+        '''
+        return str(input)
+
+    def convert_object_series_to_datetime(self, source_dataframe: pd.DataFrame, timestamp_labels: List[str]):
+        ''' Converts a pandas series of unix epoch milliseconds (timestamps) values into a series of datetime values
+        
+        By the default the function updates inplace the original DataFrame
+        This function facilitates the handling of time-series values
+        Arguments:
+        source_dataframe: the pandas DataFrame that exposes the labels to be converted
+        timestamp_labels: a list of label/column names 
+        '''
+        print(f"Converting labels: {timestamp_labels}")
+        for single_label in timestamp_labels:
+            try:
+                source_dataframe[single_label].apply(self.convert_object_to_string, convert_dtype=False)
+                source_dataframe[single_label] = pd.to_datetime(source_dataframe[single_label], dayfirst=False, yearfirst=True, unit="ms", origin="unix", utc=True)
+            except KeyError:
+                raise LabelDoesNotExistError(f"Please provide a label that is expose by the dataframe\nProvided labels: {timestamp_labels}")
+            except Exception as e:
+                print(e.args)
+                raise Exception
+    
+    # PAY attention to sell only what you have
+    # Need user account
+    # Need access to the amout of base and quote assets    
+    def create_new_order(self,symbol: str, side: Side, type: OrderType, quote_quantity: Optional[int]):
+        request_parameters = [("symbol", symbol), ("side", side), ("type", type)]
+        if side.BUY:
+            param = ("quantity", quote_quantity)
+            request_parameters.append(param)
+        full_path = BASE_URL + API_VERSION + "/" + "order"
+        post(full_path, data=request_parameters)
+    
