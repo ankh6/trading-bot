@@ -55,12 +55,6 @@ class Exchange(metaclass=ABCMeta):
     def fetch_price_data_given_symbol(self) -> np.array:
         ''' Fetches the symbol trading attributes from Binance API
 
-        Arguments:
-        time: an integer from 1 to 9
-        interval_type: case-sensitive, s(SECOND), m(MINUTE), h(HOUR), d(DAY)
-        For example, given time="1", interval_type="h", the trading attributes are reported for each minute on the exchange
-        See their documentation for the enums they support: https://binance-docs.github.io/apidocs/spot/en/#limits
-
         Returns:
         exchange_info: a numpy array that stores the trading attributes
         '''
