@@ -1,9 +1,12 @@
 from abc import ABCMeta
 from typing import List, Optional, Tuple
 from Constants import BASE_URL, API_VERSION
+from strategies import MomentumStrategy
 from orders.Order import OrderType, Side
-from errors.Exceptions import LabelDoesNotExistError
+from errors.Exceptions import LabelNotFoundError
 from requests import get, post
+from time import sleep, time
+import sched
 import numpy as np
 import pandas as pd
 
@@ -49,7 +52,7 @@ class Exchange(metaclass=ABCMeta):
         self.base_asset = symbols[0]["baseAsset"]
         self.quote_asset = symbols[0]["quoteAsset"]
     
-    def fetch_price_data_given_symbol(self, time: str, interval_type:str):
+    def fetch_price_data_given_symbol(self) -> np.array:
         ''' Fetches the symbol trading attributes from Binance API
 
         Arguments:
@@ -61,7 +64,7 @@ class Exchange(metaclass=ABCMeta):
         Returns:
         exchange_info: a numpy array that stores the trading attributes
         '''
-        _interval = time + interval_type
+        _interval = "5m"
         exchange_info = self.fetch_exchange_given_trading_pairs(url=BASE_URL, version=API_VERSION, endpoint="klines",params=[("symbol", self.symbol),("interval", _interval)])
         return np.array(exchange_info, copy=False)
         
@@ -92,7 +95,7 @@ class Exchange(metaclass=ABCMeta):
                 source_dataframe[single_label].apply(self.convert_object_to_string, convert_dtype=False)
                 source_dataframe[single_label] = pd.to_datetime(source_dataframe[single_label], dayfirst=False, yearfirst=True, unit="ms", origin="unix", utc=True)
             except KeyError:
-                raise LabelDoesNotExistError(f"Please provide a label that is expose by the dataframe\nProvided labels: {timestamp_labels}")
+                raise LabelNotFoundError(f"Please provide a label that is expose by the dataframe\nProvided labels: {timestamp_labels}")
             except Exception as e:
                 print(e.args)
                 raise Exception
@@ -112,11 +115,10 @@ class Exchange(metaclass=ABCMeta):
         self.convert_object_series_to_datetime(df, ["Open time", "Close time"])
         return df
 
-    
-    
+
     # PAY attention to sell only what you have
     # Need user account
-    # Need access to the amout of base and quote assets    
+    # Need access to the amout of base and quote assets
     def create_new_order(self,symbol: str, side: Side, type: OrderType, quote_quantity: Optional[int]):
         request_parameters = [("symbol", symbol), ("side", side), ("type", type)]
         if side.BUY:
@@ -125,3 +127,41 @@ class Exchange(metaclass=ABCMeta):
         full_path = BASE_URL + API_VERSION + "/" + "order"
         post(full_path, data=request_parameters)
     
+
+    def execute_strategy(self):
+        '''
+        Main routine
+        '''
+        ex = Exchange()
+        ex.initialize("ETHUSDC")
+        print("Fetching data from Binance API . . .")
+        trading_attributes = ex.fetch_price_data_given_symbol()
+        df_trading_attributes = ex.create_symbol_dataframe(symbol_trading_attributes=trading_attributes)
+        print(f"Trading attributes DataFrame: {df_trading_attributes}")
+        short_ema, long_ema = MomentumStrategy.compute_short_long_ema(trading_attributes_dataframe=df_trading_attributes)
+        print(f"Values of short and long ema, respectively: {short_ema} {long_ema}")
+        rsi = MomentumStrategy.compute_rsi(trading_attributes_dataframe=df_trading_attributes)
+        print(f"Value of RSI: {rsi}")
+        # TO-DO : implements buy and sell conditions
+        # upward trend when short was below long, then short crosses long
+        # downward trend when long was above short, then long crosses short
+        # crossing means both have the same value or short = term or short - term = 0
+        # add the logic that stores both values and track equality between both values
+        # take into account RSI value (RSI < 20 -> OVERSOLD -> Buy signal, RSI > 80 -> OVERBOUGHT -> Sell signal)
+
+        # TO-DO: add reporting
+        # once the job has run, store values of interest
+        # date, trading_pair, value of indicators, type of order (eg BUY or SELL), order status (completed or rejected)
+
+
+if __name__ == '__main__':
+    try:
+        scheduler = sched.scheduler(time,sleep)
+        exchange = Exchange()
+        # Executes the trading strategy every 5 minutes
+        # priority, mandatory argument. 1 equals the highest priority
+        scheduler.enter(delay=60*5, priority=1, action=exchange.execute_strategy)
+    except Exception as e:
+        print(e.args)
+        raise Exception
+
