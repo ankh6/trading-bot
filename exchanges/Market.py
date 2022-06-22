@@ -1,6 +1,7 @@
 from abc import ABCMeta
 from typing import List, Optional, Tuple
-from Constants import BASE_URL, API_VERSION
+from Constants import API_VERSION, BASE_URL, BOT_RUNNING_FREQUENCY_IN_SECONDS, CROSSING_POINT, INTERVAL_TIME, RSI_OVERSOLD_LIMIT, RSI_OVERBOUGHT_BOUND
+from services import Reporter
 from strategies import MomentumStrategy
 from orders.Order import OrderType, Side
 from errors.Exceptions import LabelNotFoundError
@@ -16,6 +17,8 @@ class Exchange(metaclass=ABCMeta):
         self.symbol = None
         self.base_asset : str = None
         self.quote_asset : str = None
+        self._trend_direction : int = None
+        self.date = None
         self._timeout : int = None
         self._rate_limit_time : str = None
         self._rate_limit : int = None
@@ -58,7 +61,7 @@ class Exchange(metaclass=ABCMeta):
         Returns:
         exchange_info: a numpy array that stores the trading attributes
         '''
-        _interval = "5m"
+        _interval = INTERVAL_TIME
         exchange_info = self.fetch_exchange_given_trading_pairs(url=BASE_URL, version=API_VERSION, endpoint="klines",params=[("symbol", self.symbol),("interval", _interval)])
         return np.array(exchange_info, copy=False)
         
@@ -83,7 +86,6 @@ class Exchange(metaclass=ABCMeta):
         source_dataframe: the pandas DataFrame that exposes the labels to be converted
         timestamp_labels: a list of label/column names 
         '''
-        print(f"Converting labels: {timestamp_labels}")
         for single_label in timestamp_labels:
             try:
                 source_dataframe[single_label].apply(self.convert_object_to_string, convert_dtype=False)
@@ -92,8 +94,19 @@ class Exchange(metaclass=ABCMeta):
                 raise LabelNotFoundError(f"Please provide a label that is expose by the dataframe\nProvided labels: {timestamp_labels}")
             except Exception as e:
                 print(e.args)
-                raise Exception
+                raise e    
     
+    def get_most_recent_date(self, trading_attribute_dataframe: pd.DataFrame):
+        ''' Retrieves the last date
+
+        Arguments:
+        trading_attributes_dataframe: the source dataframe that stores the closing prices of the base asset
+
+        Returns:
+        the date
+        '''
+        dates = trading_attribute_dataframe.loc[:,"Close time"]
+        return dates.loc[dates.size - 1]
     
     def create_symbol_dataframe(self, symbol_trading_attributes: np.array):
         ''' Generates a DataFrame that stores attributes of a the trading pair
@@ -110,11 +123,14 @@ class Exchange(metaclass=ABCMeta):
         return df
 
 
-    # PAY attention to sell only what you have
-    # Need user account
-    # Need access to the amout of base and quote assets
+    # TO-DO
+    # Implement reading account of the user
+    # Know how much user has of base and quote assets
+    # Integrate quote quantity
+    # Sell-side : Not sell more than user has
+
     def create_new_order(self,symbol: str, side: Side, type: OrderType, quote_quantity: Optional[int]):
-        request_parameters = [("symbol", symbol), ("side", side), ("type", type)]
+        request_parameters = [("symbol", symbol), ("side", side), ("type", type), ("Content-Type", "application/x-www-form-urlencoded"), ("X-MBX-APIKEY", API_KEY), ("signature", SIGNATURE)]
         if side.BUY:
             param = ("quantity", quote_quantity)
             request_parameters.append(param)
@@ -122,7 +138,28 @@ class Exchange(metaclass=ABCMeta):
         post(full_path, data=request_parameters)
     
 
-    def execute_strategy(self):
+    def execute_strategy(self, trading_attributes_dataframe: pd.DataFrame, rsi: int) -> OrderType:
+        '''
+        '''
+        try:
+            self._trend_direction = MomentumStrategy.find_trend_direction(trading_attributes_dataframe)
+            # CROSSING_POINT equals 0.0, i.e. EMA long-term = EMA short-term or EMA short-term - EMA long-term = 0
+            # Upward direction of the trend
+            if self._trend_direction > CROSSING_POINT and (rsi < RSI_OVERSOLD_LIMIT):
+                self.create_new_order(self.symbol, Side.BUY, OrderType.MARKET_ORDER, quote_quantity=0)
+                return Side.BUY
+            # Downard direction of the trend
+            elif self._trend_direction < CROSSING_POINT and (rsi > RSI_OVERBOUGHT_BOUND):
+                self.create_new_order(self.symbol, Side.SELL, OrderType.MARKET_ORDER, quote_quantity=0)
+                return Side.SELL
+        except IndexError:
+            print("There were no crossing observed\n Stand still !")
+        except Exception as e:
+            print(e.args)
+            raise e
+
+    
+    def run(self):
         '''
         Main routine
         '''
@@ -130,31 +167,26 @@ class Exchange(metaclass=ABCMeta):
         print("Fetching data from Binance API . . .")
         trading_attributes = self.fetch_price_data_given_symbol()
         df_trading_attributes = self.create_symbol_dataframe(symbol_trading_attributes=trading_attributes)
-        print(f"Trading attributes DataFrame: {df_trading_attributes}")
-        short_ema, long_ema = MomentumStrategy.compute_short_long_ema(trading_attributes_dataframe=df_trading_attributes)
-        print(f"Values of short and long ema, respectively: {short_ema} {long_ema}")
+        date = self.get_most_recent_date(df_trading_attributes)
+        short_ema, long_ema = MomentumStrategy.find_latest_short_long_ema(trading_attributes_dataframe=df_trading_attributes)
         rsi = MomentumStrategy.compute_rsi(trading_attributes_dataframe=df_trading_attributes)
-        print(f"Value of RSI: {rsi}")
-        # TO-DO : implements buy and sell conditions
-        # upward trend when short was below long, then short crosses long
-        # downward trend when long was above short, then long crosses short
-        # crossing means both have the same value or short = term or short - term = 0
-        # add the logic that stores both values and track equality between both values
-        # take into account RSI value (RSI < 20 -> OVERSOLD -> Buy signal, RSI > 80 -> OVERBOUGHT -> Sell signal)
+        side = self.execute_strategy(df_trading_attributes, rsi)
+        print("Building report . . . ")
+        Reporter._create_trading_report(date=date, symbol=self.symbol, short_ema=short_ema, long_ema=long_ema, rsi=rsi, side=side)
+        print("Report done !")
+        # Executes the trading strategy every 5 minutes
+        # priority, mandatory argument. 1 equals the highest priority
+        scheduler.enter(delay=BOT_RUNNING_FREQUENCY_IN_SECONDS, priority=1, action=self.run)
+        scheduler.run()
 
-        # TO-DO: add reporting
-        # once the job has run, store values of interest
-        # date, trading_pair, value of indicators, type of order (eg BUY or SELL), order status (completed or rejected)
 
 
 if __name__ == '__main__':
     try:
         scheduler = sched.scheduler(time,sleep)
         exchange = Exchange()
-        # Executes the trading strategy every 5 minutes
-        # priority, mandatory argument. 1 equals the highest priority
-        scheduler.enter(delay=60*5, priority=1, action=exchange.execute_strategy)
+        exchange.run()
     except Exception as e:
         print(e.args)
-        raise Exception
+        raise e
 
