@@ -145,7 +145,7 @@ class Exchange(metaclass=ABCMeta):
             # Buy or strong signals were not strong enough
             # do nothing
             else:
-                print("Buy or Sell signals were not strong enough!\nKeep positions")
+                print("Buy or Sell signals were not strong enough!\nKeep position")
                 return Side.NEUTRAL
         except IndexError:
             print("There were no crossing observed")
