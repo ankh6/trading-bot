@@ -6,39 +6,33 @@
 
 If you would still like to run the bot from source please follow the instructions below 👇
 
-### Clone the repo
-'''
-git clone https://github.com/ankh6/trading-bot.git
-'''
-
-### Install the requirements
-'''
-pip install -r requirements.txt 
-'''
+#### Clone the repo
+`git clone https://github.com/ankh6/trading-bot.git`
 
 
-### Add your API-KEY and SIGNATURE as environment variables
+#### Install the requirements
+`pip install -r requirements.txt `
+
+
+#### Add your API-KEY and SIGNATURE as environment variables
 This step is **mandatory** to make orders.
 
-### Open your favorite terminal 
-### Navigate to the trading-bot
+#### Open your favorite terminal 
+#### Navigate to the trading-bot
 
-'''
-cd path/to/exchanges/folder
-'''
+`cd path/to/exchanges/folder`
 
-### Run the trading-bot
-'''
-python Market.py
-'''
+
+#### Run the trading-bot
+`python Market.py`
 
 ## Features
 
 Centralized exchange(s) supported : Binance
 
-Depending on the trading pair you are interested in, the trading bot initializes itself by retrieving the exchange for the given exchange (e.g. ETHUSDC). It does so by hitting the '''exchangeInfo''' [Binance endpoint](https://binance-docs.github.io/apidocs/spot/en/#exchange-information). We do not store every data provided by response payload. In fact, we only need the symbol (ETHUSDC), the base asset (ETH) and the quote asset (USDC)
+Depending on the trading pair you are interested in, the trading bot initializes itself by retrieving the exchange for the given exchange (e.g. ETHUSDC). It does so by hitting the `exchangeInfo` [Binance endpoint](https://binance-docs.github.io/apidocs/spot/en/#exchange-information). We do not store every data provided by response payload. In fact, we only need the symbol (ETHUSDC), the base asset (ETH) and the quote asset (USDC)
 
-Once the Exchange properties are set, the bot retrieves the market data point by hitting the '''klines''' [Binance endpoint](https://binance-docs.github.io/apidocs/spot/en/#kline-candlestick-data). The response payload exposes order books's information and data points that any trader/quant is familiar with:
+Once the Exchange properties are set, the bot retrieves the market data point by hitting the `klines` [Binance endpoint](https://binance-docs.github.io/apidocs/spot/en/#kline-candlestick-data). The response payload exposes order books's information and data points that any trader/quant is familiar with:
 - Open time
 - Open price
 - Open
@@ -86,11 +80,11 @@ Alongside the indicators, the trading bot takes into account the closing price a
 
 Once the trading bot has taken a decision and the new order has gone through, a *trading report* file is created. This file summarizes the date, the trading pair, the value of SEMA, the value of LEMA, the rsi and the side of the transaction.
 
-If you do not interrupt it (open the terminal, ''' CTRL+C'''), the trading bot runs **every day** forever
+If you do not interrupt it (open the terminal, `CTRL+C`), the trading bot runs **every day** forever
 
 ## What is next ?
 - Read coins from user
-- Integrate asset
+- Integrate asset quantity
 
 ## Disclaimer
 This software is for educational purposes only. USE THE SOFTWARE AT YOUR OWN RISK. THE AUTHORS AND ALL AFFILIATES ASSUME NO RESPONSIBILITY FOR YOUR TRADING RESULTS. Do not risk money which you are afraid to lose. There might be bugs in the code - this software DOES NOT come with ANY warranty.
