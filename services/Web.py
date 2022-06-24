@@ -22,7 +22,7 @@ def fetch_exchange_given_trading_pairs(url: str, version: str, endpoint: str, pa
 # TO-DO
 # Implement reading account of the user
 # Know how much user has of base and quote assets
-# Integrate quote quantity
+# Integrate asset quantity
 # Sell-side : Not sell more than user has
 def _create_new_order(symbol: str, side: Side, type: OrderType, asset_quantity: Optional[int]):
     ''' Sends a POST request to Binance
