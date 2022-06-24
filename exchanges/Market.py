@@ -1,12 +1,10 @@
 from abc import ABCMeta
-from typing import List, Optional, Tuple
-from Constants import API_VERSION, BASE_URL, BOT_RUNNING_FREQUENCY_IN_SECONDS, CROSSING_POINT, INTERVAL_TIME, RSI_OVERSOLD_LIMIT, RSI_OVERBOUGHT_BOUND
-from services import Reporter
-from strategies import MomentumStrategy
-from orders.Order import OrderType, Side
-from errors.Exceptions import LabelNotFoundError
-from requests import get, post
 from time import sleep, time
+from Constants import API_VERSION, BASE_URL, BOT_RUNNING_FREQUENCY_IN_SECONDS, CROSSING_POINT, INTERVAL_TIME, RSI_OVERSOLD_LIMIT, RSI_OVERBOUGHT_BOUND
+from orders.Order import OrderType, Side
+from services import Reporter, Web
+from strategies import MomentumStrategy
+from utils import ExchangeHelper
 import sched
 import numpy as np
 import pandas as pd
@@ -14,30 +12,13 @@ import pandas as pd
 
 class Exchange(metaclass=ABCMeta):
     def __init__(self):
-        self.symbol = None
+        self.symbol: str = None
         self.base_asset : str = None
         self.quote_asset : str = None
         self._trend_direction : int = None
         self.date = None
-        self._timeout : int = None
-        self._rate_limit_time : str = None
-        self._rate_limit : int = None
-
-    def fetch_exchange_given_trading_pairs(self, url: str, version: str, endpoint: str, params: List[Tuple[str,str]]):
-        ''' Helper function to fetch data given a url, endpoint and request parameters (optional)
-
-        Arguments:
-        url: string, the base URI (Uniform Resource Identifier)
-        endpoint: a string, the endpoint
-        params: list of tuples, the request parameters (optional)
-        
-        Return:
-        response, the resources in a json format
-        '''
-        request_parameters = params
-        full_path = url+ version + "/" + endpoint
-        response = get(url=full_path, params=request_parameters)
-        return response.json()
+        self.open_price: int = None
+        self.close_price: int = None
     
     def initialize(self, trading_pair : str):
         ''' Initializes the Exchange object with its properties
@@ -45,12 +26,9 @@ class Exchange(metaclass=ABCMeta):
         Arguments:
         trading_pair: A string without a "/" separating the base asset from the quote, e.g. ETH/USDC -> ETHUDSC
         '''
-        exchange_info = self.fetch_exchange_given_trading_pairs(url=BASE_URL, version=API_VERSION, endpoint="exchangeInfo" ,params=[("symbol", trading_pair)])
-        rate_limit = exchange_info["rateLimits"]    
+        exchange_info = Web.fetch_exchange_given_trading_pairs(url=BASE_URL, version=API_VERSION, endpoint="exchangeInfo" ,params=[("symbol", trading_pair)])
         symbols = exchange_info["symbols"]
         self.symbol = trading_pair
-        self._rate_limit_time = rate_limit[-1]["interval"]
-        self._rate_limit = rate_limit[-1]["limit"]
         self._symbols = symbols[0]["symbol"]
         self.base_asset = symbols[0]["baseAsset"]
         self.quote_asset = symbols[0]["quoteAsset"]
@@ -62,40 +40,9 @@ class Exchange(metaclass=ABCMeta):
         exchange_info: a numpy array that stores the trading attributes
         '''
         _interval = INTERVAL_TIME
-        exchange_info = self.fetch_exchange_given_trading_pairs(url=BASE_URL, version=API_VERSION, endpoint="klines",params=[("symbol", self.symbol),("interval", _interval)])
+        exchange_info = Web.fetch_exchange_given_trading_pairs(url=BASE_URL, version=API_VERSION, endpoint="klines",params=[("symbol", self.symbol),("interval", _interval)])
         return np.array(exchange_info, copy=False)
-        
-    
-    def convert_object_to_string(self, input) -> object:
-        ''' Converts an input of type object to an input of type string
-
-        Arguments:
-        input, the input to be converted
-
-        Return:
-        input: the converted input
-        '''
-        return str(input)
-
-    def convert_object_series_to_datetime(self, source_dataframe: pd.DataFrame, timestamp_labels: List[str]):
-        ''' Converts a pandas series of unix epoch milliseconds (timestamps) values into a series of datetime values
-        
-        By the default the function updates inplace the original DataFrame
-        This function facilitates the handling of time-series values
-        Arguments:
-        source_dataframe: the pandas DataFrame that exposes the labels to be converted
-        timestamp_labels: a list of label/column names 
-        '''
-        for single_label in timestamp_labels:
-            try:
-                source_dataframe[single_label].apply(self.convert_object_to_string, convert_dtype=False)
-                source_dataframe[single_label] = pd.to_datetime(source_dataframe[single_label], dayfirst=False, yearfirst=True, unit="ms", origin="unix", utc=True)
-            except KeyError:
-                raise LabelNotFoundError(f"Please provide a label that is expose by the dataframe\nProvided labels: {timestamp_labels}")
-            except Exception as e:
-                print(e.args)
-                raise e    
-    
+            
     def get_most_recent_date(self, trading_attribute_dataframe: pd.DataFrame):
         ''' Retrieves the last date
 
@@ -119,41 +66,89 @@ class Exchange(metaclass=ABCMeta):
         # Per documentation, this value is set as "Ignored"
         # We drop the column that stores these values
         df.drop(labels=["Ignore"], axis = 1, inplace=True)
-        self.convert_object_series_to_datetime(df, ["Open time", "Close time"])
+        ExchangeHelper.convert_object_series_to_datetime(df, ["Open time", "Close time"])
         return df
-
-
-    # TO-DO
-    # Implement reading account of the user
-    # Know how much user has of base and quote assets
-    # Integrate quote quantity
-    # Sell-side : Not sell more than user has
-
-    def create_new_order(self,symbol: str, side: Side, type: OrderType, quote_quantity: Optional[int]):
-        request_parameters = [("symbol", symbol), ("side", side), ("type", type), ("Content-Type", "application/x-www-form-urlencoded"), ("X-MBX-APIKEY", API_KEY), ("signature", SIGNATURE)]
-        if side.BUY:
-            param = ("quantity", quote_quantity)
-            request_parameters.append(param)
-        full_path = BASE_URL + API_VERSION + "/" + "order"
-        post(full_path, data=request_parameters)
     
+    def get_closing_price(self, trading_attributes_dataframe: pd.DataFrame) -> int:
+        '''
+        Arguments:
+        trading_attributes_dataframe: the source dataframe that stores the closing prices of the base asset
+        
+        Returns:
+        The most recent closing price
 
+        '''
+        closing_price_series = trading_attributes_dataframe.loc[:, "Close"]
+        self.close_price = closing_price_series.loc[closing_price_series.size - 1]
+        return self.close_price
+
+    def get_opening_price(self, trading_attributes_dataframe: pd.DataFrame):
+        '''
+        Arguments:
+        trading_attributes_dataframe: the source dataframe that stores the closing prices of the base asset
+
+        Returns:
+        The most recent opening price
+
+        '''
+        opening_price_series = trading_attributes_dataframe.loc[:, "Open"]
+        self.open_price = opening_price_series.loc[opening_price_series.size - 1]
+        return self.open_price
+    
+    # TO-DO
+    # Implement logic to use a fraction of the user's quantity
+    def set_asset_quantity(self, quantity: int):
+        return quantity
+
+    
     def execute_strategy(self, trading_attributes_dataframe: pd.DataFrame, rsi: int) -> OrderType:
+        ''' Executes the trading strategy depending on the values of the technical indicators, EMA and RSI
+
+        Arguments:
+        trading_attributes_dataframe: the source dataframe that stores the closing prices of the base asset
+        rsi: The Relative Strength Index for the time period 
+        Returns:
+        The side of the action, a buy, a sell or neutral
         '''
-        '''
+        open_price = self.get_opening_price(trading_attributes_dataframe)
+        close_price = self.get_closing_price(trading_attributes_dataframe)
         try:
             self._trend_direction = MomentumStrategy.find_trend_direction(trading_attributes_dataframe)
             # CROSSING_POINT equals 0.0, i.e. EMA long-term = EMA short-term or EMA short-term - EMA long-term = 0
             # Upward direction of the trend
-            if self._trend_direction > CROSSING_POINT and (rsi < RSI_OVERSOLD_LIMIT):
-                self.create_new_order(self.symbol, Side.BUY, OrderType.MARKET_ORDER, quote_quantity=0)
+            if ((close_price > open_price) or (self._trend_direction > CROSSING_POINT)) and (rsi < RSI_OVERSOLD_LIMIT):
+                # Default value
+                # Example
+                quantity = self.set_asset_quantity(0)
+                print(f"Very strong buy signals: {close_price}, {open_price}\n{rsi}")
+                Web._create_new_order(self.symbol, Side.BUY, OrderType.MARKET_ORDER, quote_quantity=quantity)
                 return Side.BUY
+            
+            elif rsi < RSI_OVERSOLD_LIMIT or ((close_price > open_price) and (self._trend_direction > CROSSING_POINT)):
+                quantity = self.set_asset_quantity(0)
+                print(f"Strong buy signals: {close_price}, {open_price}\n{rsi}")
+                Web._create_new_order(self.symbol, Side.BUY, OrderType.MARKET_ORDER, quote_quantity=0)
+                return Side.BUY
+            
             # Downard direction of the trend
-            elif self._trend_direction < CROSSING_POINT and (rsi > RSI_OVERBOUGHT_BOUND):
-                self.create_new_order(self.symbol, Side.SELL, OrderType.MARKET_ORDER, quote_quantity=0)
+            elif ((open_price > close_price) or (self._trend_direction < CROSSING_POINT)) and (rsi > RSI_OVERBOUGHT_BOUND):
+                quantity = self.set_asset_quantity(0)
+                print(f"Very strong sell signals: {open_price}, {close_price}\n{rsi}")
+                Web._create_new_order(self.symbol, Side.SELL, OrderType.MARKET_ORDER, quote_quantity=0)
                 return Side.SELL
+            
+            elif rsi > RSI_OVERBOUGHT_BOUND or ((open_price > close_price ) and (self._trend_direction < CROSSING_POINT)):
+                quantity = self.set_asset_quantity(0)
+                print(f"Strong sell signals: {open_price}, {close_price}\n{rsi}")
+                Web._create_new_order(self.symbol, Side.SELL, OrderType.MARKET_ORDER, quote_quantity=0)
+                return Side.SELL
+            # Buy or strong signals were not strong enough
+            # do nothing
+            else:
+                print("Buy or Sell signals were not strong enough!\nKeep positions")
+                return Side.NEUTRAL
         except IndexError:
-            print("There were no crossing observed\n Stand still !")
+            print("There were no crossing observed")
         except Exception as e:
             print(e.args)
             raise e
@@ -164,15 +159,17 @@ class Exchange(metaclass=ABCMeta):
         Main routine
         '''
         self.initialize("ETHUSDC")
-        print("Fetching data from Binance API . . .")
+        print("Fetching data from Binance API . . . ")
         trading_attributes = self.fetch_price_data_given_symbol()
         df_trading_attributes = self.create_symbol_dataframe(symbol_trading_attributes=trading_attributes)
-        date = self.get_most_recent_date(df_trading_attributes)
+        self.date = self.get_most_recent_date(df_trading_attributes)
+        print(f"Last observation on {self.date}")
+        print("Computing RSI, short-/long-term EMAs to make a decision ... ")
         short_ema, long_ema = MomentumStrategy.find_latest_short_long_ema(trading_attributes_dataframe=df_trading_attributes)
         rsi = MomentumStrategy.compute_rsi(trading_attributes_dataframe=df_trading_attributes)
         side = self.execute_strategy(df_trading_attributes, rsi)
         print("Building report . . . ")
-        Reporter._create_trading_report(date=date, symbol=self.symbol, short_ema=short_ema, long_ema=long_ema, rsi=rsi, side=side)
+        Reporter._create_trading_report(date=self.date, symbol=self.symbol, short_ema=short_ema, long_ema=long_ema, rsi=rsi, side=side)
         print("Report done !")
         # Executes the trading strategy every 5 minutes
         # priority, mandatory argument. 1 equals the highest priority
