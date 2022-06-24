@@ -7,6 +7,7 @@ def fetch_exchange_given_trading_pairs(url: str, version: str, endpoint: str, pa
     
     Arguments:
     url: string, the base URI (Uniform Resource Identifier)
+    version: version of the Binance API
     endpoint: a string, the endpoint
     params: list of tuples, the request parameters (optional)
         
